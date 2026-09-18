@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Timeline from './Timeline';
 import NLPQueryBox from './NLPQueryBox';
 import DoctorInsights from './DoctorInsights';
+import ChatAssistant from './ChatAssistant';
 import './App.css';
 
 function App() {
@@ -124,6 +125,9 @@ function App() {
           title="Total Cholesterol" 
         />
       )}
+
+      {/* Floating Chat Assistant */}
+      <ChatAssistant patientId={PATIENT_ID} />
     </div>
   );
 }

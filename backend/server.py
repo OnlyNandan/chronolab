@@ -196,6 +196,51 @@ async def export_fhir(request: Request, patient_id: str):
         
     return JSONResponse(content=bundle)
 
+class ChatQuery(BaseModel):
+    patient_id: str
+    question: str
+    history: list = []
+
+@app.post("/api/chat")
+@requires_auth()
+async def chat_with_timeline(request: Request, payload: ChatQuery):
+    try:
+        # 1. Fetch Timeline Data
+        history_json = fetch_patient_history(payload.patient_id)
+        
+        # 2. Construct System Prompt
+        system_prompt = f"""
+        You are an AI Timeline Assistant for ChronoLab. Your job is to answer questions about the patient's medical timeline.
+        
+        CRITICAL CONSTRAINTS:
+        1. NEVER make diagnostic conclusions.
+        2. NEVER make treatment-efficacy judgments.
+        3. NEVER use qualitative words like "good", "bad", "healthy", "unhealthy", "worse", "better".
+        4. ONLY output factual, mathematical, or chronological statements based on the provided JSON data.
+        
+        PATIENT TIMELINE JSON:
+        {history_json}
+        """
+        
+        # 3. Construct Messages Array
+        messages = [{'role': 'system', 'content': system_prompt}]
+        for msg in payload.history:
+            messages.append({'role': msg.get('role', 'user'), 'content': msg.get('content', '')})
+            
+        messages.append({'role': 'user', 'content': payload.question})
+        
+        # 4. Generate Response
+        response = ollama.chat(
+            model='qwen2.5:3b',
+            messages=messages,
+            options={'temperature': 0.2}
+        )
+        
+        return {"answer": response['message']['content']}
+        
+    except Exception as e:
+        return {"answer": f"Error querying timeline: {e}"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
