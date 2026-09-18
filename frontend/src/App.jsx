@@ -44,17 +44,60 @@ function App() {
     Promise.all([fetchRecords(), fetchMedications()]).then(() => {
       setLoading(false);
     });
+
+    // Real-Time Collaboration: Connect to WebSocket
+    const ws = new WebSocket(`ws://localhost:8000/ws/timeline/${PATIENT_ID}`);
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'NEW_MEDICATION') {
+        // Prevent duplicates if the user adding it already got it from the POST response
+        setMeds(prevMeds => {
+          if (prevMeds.some(m => m.record_id === message.data.record_id)) return prevMeds;
+          return [...prevMeds, message.data];
+        });
+      }
+    };
+
+    return () => ws.close();
   }, []);
 
   const handleMedicationAdded = (newMed) => {
-    setMeds([...meds, newMed]);
+    // We can rely on WebSocket for updates, but for immediate UI response, we also add it directly.
+    setMeds(prevMeds => {
+      if (prevMeds.some(m => m.record_id === newMed.record_id)) return prevMeds;
+      return [...prevMeds, newMed];
+    });
+  };
+
+  const handleExportFHIR = async () => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/export/fhir/${PATIENT_ID}`, {
+        headers: { 'X-User-Role': 'doctor', 'X-User-Id': 'DOC-001' }
+      });
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `patient_${PATIENT_ID}_fhir_bundle.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export FHIR", err);
+    }
   };
 
   return (
     <div className="dashboard-container">
       <div className="header">
-        <h1>ChronoLab</h1>
-        <p>Unified Timeline for Patient Lab Reports</p>
+        <div>
+          <h1>ChronoLab</h1>
+          <p>Unified Timeline for Patient Lab Reports</p>
+        </div>
+        <button className="fhir-button" onClick={handleExportFHIR}>
+          Export to FHIR
+        </button>
       </div>
       
       <div className="top-widgets">

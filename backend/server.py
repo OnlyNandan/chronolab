@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -34,6 +35,34 @@ dynamodb = boto3.resource(
 )
 
 table = dynamodb.Table('chronolab-records')
+
+# WebSocket Manager for Real-Time Collaboration
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            await connection.send_json(message)
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/timeline/{patient_id}")
+async def websocket_endpoint(websocket: WebSocket, patient_id: str):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # We just listen to keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 @app.get("/api/records/{patient_id}")
 @requires_auth()
@@ -96,6 +125,10 @@ async def add_medication_nlp(request: Request, payload: NLPQuery):
         }
         
         table.put_item(Item=item)
+        
+        # Broadcast the new medication to all connected clients
+        await manager.broadcast({"type": "NEW_MEDICATION", "data": item})
+        
         return {"status": "success", "medication": item}
         
     except Exception as e:
@@ -114,7 +147,55 @@ async def get_doctor_insights(request: Request, patient_id: str):
     except Exception as e:
         return {"insights": f"Error generating insights: {e}"}
 
+@app.get("/api/export/fhir/{patient_id}")
+@requires_auth()
+async def export_fhir(request: Request, patient_id: str):
+    response = table.query(
+        KeyConditionExpression=Key('patient_id').eq(patient_id)
+    )
+    items = response.get('Items', [])
+    
+    # Mocked FHIR Bundle for Hackathon Demonstration
+    bundle = {
+        "resourceType": "Bundle",
+        "type": "collection",
+        "entry": []
+    }
+    
+    for item in items:
+        if item.get('record_id', '').startswith('MED#'):
+            entry = {
+                "resource": {
+                    "resourceType": "MedicationStatement",
+                    "status": "active",
+                    "medicationCodeableConcept": {
+                        "coding": [{"display": item.get('drug_name')}]
+                    },
+                    "effectivePeriod": {
+                        "start": item.get('start_date'),
+                        "end": item.get('end_date')
+                    }
+                }
+            }
+        else:
+            entry = {
+                "resource": {
+                    "resourceType": "Observation",
+                    "status": "final",
+                    "code": {
+                        "coding": [{"display": item.get('test_name_canonical')}]
+                    },
+                    "valueQuantity": {
+                        "value": float(item.get('value', 0)) if item.get('value') else 0,
+                        "unit": item.get('unit', '')
+                    },
+                    "effectiveDateTime": item.get('date_time', '')
+                }
+            }
+        bundle["entry"].append(entry)
+        
+    return JSONResponse(content=bundle)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

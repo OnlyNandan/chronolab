@@ -11,6 +11,9 @@ COMPLETED:
 - [P2] Medication CRUD forms or NLP query box in React frontend.
 - [POLISH] Voice-to-Text NLP Query UI using Web Speech API.
 - [POLISH] Live Doctor Mode Insights API & React component integration.
+- [WORLD-CLASS] Real-Time Collaboration via FastAPI WebSockets.
+- [WORLD-CLASS] HealthTech Interoperability via FHIR Export Endpoint.
+- [WORLD-CLASS] Premium Startup-Level UI (Animated Gradient Mesh).
 
 IN PROGRESS:
 - Final polish for Hackathon presentation.
