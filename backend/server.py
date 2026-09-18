@@ -1,7 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 from boto3.dynamodb.conditions import Key
+from pydantic import BaseModel
+import ollama
+import json
+import uuid
+import datetime
+from .auth_middleware import requires_auth
 
 app = FastAPI(title="ChronoLab API")
 
@@ -29,11 +35,70 @@ dynamodb = boto3.resource(
 table = dynamodb.Table('chronolab-records')
 
 @app.get("/api/records/{patient_id}")
-def get_patient_records(patient_id: str):
+@requires_auth()
+async def get_patient_records(request: Request, patient_id: str):
     response = table.query(
         KeyConditionExpression=Key('patient_id').eq(patient_id)
     )
+    # Filter out medications for this endpoint (if they exist)
+    items = response.get('Items', [])
+    records = [item for item in items if not item.get('record_id', '').startswith('MED#')]
+    return records
+
+@app.get("/api/medications/{patient_id}")
+@requires_auth()
+async def get_patient_medications(request: Request, patient_id: str):
+    response = table.query(
+        KeyConditionExpression=Key('patient_id').eq(patient_id) & Key('record_id').begins_with('MED#')
+    )
     return response.get('Items', [])
+
+class NLPQuery(BaseModel):
+    query: str
+    patient_id: str
+
+@app.post("/api/medications/nlp")
+@requires_auth()
+async def add_medication_nlp(request: Request, payload: NLPQuery):
+    system_prompt = """
+    Extract medication details from the user's natural language input.
+    Output ONLY valid JSON matching this schema:
+    {
+      "drug_name": "string",
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD or null"
+    }
+    If the date is missing, use the current date or guess based on context.
+    """
+    
+    try:
+        response = ollama.chat(
+            model='qwen2.5:3b',
+            messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': payload.query}
+            ],
+            format='json',
+            options={'temperature': 0.1}
+        )
+        data = json.loads(response['message']['content'])
+        
+        # Save to DynamoDB
+        record_id = f"MED#{datetime.datetime.now().strftime('%Y-%m-%d')}#{str(uuid.uuid4())[:8]}"
+        item = {
+            "patient_id": payload.patient_id,
+            "record_id": record_id,
+            "test_name_canonical": "Medication",
+            "drug_name": data.get("drug_name"),
+            "start_date": data.get("start_date"),
+            "end_date": data.get("end_date")
+        }
+        
+        table.put_item(Item=item)
+        return {"status": "success", "medication": item}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
