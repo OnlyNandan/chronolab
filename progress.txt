@@ -9,6 +9,8 @@ COMPLETED:
 - [P1] "New Doctor Mode" strict text-only trend generation agent.
 - [P2] Minimal Cedar Policy Auth/RBAC layer.
 - [P2] Medication CRUD forms or NLP query box in React frontend.
+- [POLISH] Voice-to-Text NLP Query UI using Web Speech API.
+- [POLISH] Live Doctor Mode Insights API & React component integration.
 
 IN PROGRESS:
 - Final polish for Hackathon presentation.

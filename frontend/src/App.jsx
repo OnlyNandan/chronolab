@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Timeline from './Timeline';
 import NLPQueryBox from './NLPQueryBox';
+import DoctorInsights from './DoctorInsights';
 import './App.css';
 
 function App() {
@@ -56,7 +57,10 @@ function App() {
         <p>Unified Timeline for Patient Lab Reports</p>
       </div>
       
-      <NLPQueryBox patientId={PATIENT_ID} onMedicationAdded={handleMedicationAdded} />
+      <div className="top-widgets">
+        <NLPQueryBox patientId={PATIENT_ID} onMedicationAdded={handleMedicationAdded} />
+        <DoctorInsights patientId={PATIENT_ID} />
+      </div>
       
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>

@@ -8,6 +8,7 @@ import json
 import uuid
 import datetime
 from .auth_middleware import requires_auth
+from .doctor_mode import fetch_patient_history, generate_doctor_summary
 
 app = FastAPI(title="ChronoLab API")
 
@@ -100,6 +101,20 @@ async def add_medication_nlp(request: Request, payload: NLPQuery):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/insights/{patient_id}")
+@requires_auth()
+async def get_doctor_insights(request: Request, patient_id: str):
+    try:
+        history_json = fetch_patient_history(patient_id)
+        if len(json.loads(history_json)) == 0:
+            return {"insights": "No patient records found."}
+        
+        summary = generate_doctor_summary(history_json)
+        return {"insights": summary}
+    except Exception as e:
+        return {"insights": f"Error generating insights: {e}"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

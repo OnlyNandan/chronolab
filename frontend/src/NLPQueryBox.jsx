@@ -1,9 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 function NLPQueryBox({ patientId, onMedicationAdded }) {
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  
+  // Setup Speech Recognition
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = SpeechRecognition ? new SpeechRecognition() : null;
+  
+  if (recognition) {
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setQuery(transcript);
+      setIsListening(false);
+    };
+    
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error", event.error);
+      setIsListening(false);
+    };
+    
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+  }
+
+  const handleMicClick = (e) => {
+    e.preventDefault();
+    if (!recognition) {
+      setError("Speech recognition is not supported in this browser.");
+      return;
+    }
+    
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+    } else {
+      recognition.start();
+      setIsListening(true);
+      setError('');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -44,6 +87,14 @@ function NLPQueryBox({ patientId, onMedicationAdded }) {
       <p className="nlp-subtitle">Describe medication changes in plain English. The Strands NLP agent will parse it automatically.</p>
       
       <form onSubmit={handleSubmit} className="nlp-form">
+        <button 
+          className={`mic-button ${isListening ? 'listening' : ''}`}
+          onClick={handleMicClick}
+          type="button"
+          title="Click to speak"
+        >
+          {isListening ? '🎙️...' : '🎤'}
+        </button>
         <input 
           type="text" 
           className="nlp-input"
