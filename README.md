@@ -54,14 +54,14 @@ moto_server -p 4566
 
 ### 2. Start the Backend (FastAPI)
 ```bash
-cd backend
 python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-# Make sure to install websockets
-pip install websockets
-uvicorn server:app --host 0.0.0.0 --port 8000
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r backend/requirements.txt
+cp .env.example .env       # fill in the top block, then run scripts/bootstrap.sh
+uvicorn backend.server:app --host 0.0.0.0 --port 8000
 ```
+Run from the repo root (not `backend/`) — `backend/server.py` imports its siblings
+as a package (`backend.config`, `backend.auth_middleware`, etc).
 
 ### 3. Start the Frontend (React)
 ```bash

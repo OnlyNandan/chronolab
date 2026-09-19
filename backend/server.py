@@ -1,13 +1,13 @@
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import boto3
 from boto3.dynamodb.conditions import Key
 from pydantic import BaseModel
 import ollama
 import json
 import uuid
 import datetime
+from .config import get_dynamodb_table
 from .auth_middleware import requires_auth
 from .doctor_mode import fetch_patient_history, generate_doctor_summary
 
@@ -21,20 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ENDPOINT_URL = "http://localhost:4566"
-REGION = "us-east-1"
-AWS_ACCESS_KEY_ID = "test"
-AWS_SECRET_ACCESS_KEY = "test"
-
-dynamodb = boto3.resource(
-    'dynamodb', 
-    endpoint_url=ENDPOINT_URL, 
-    region_name=REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-
-table = dynamodb.Table('chronolab-records')
+table = get_dynamodb_table()
 
 # WebSocket Manager for Real-Time Collaboration
 class ConnectionManager:

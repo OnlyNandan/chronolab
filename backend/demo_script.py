@@ -1,37 +1,17 @@
 import os
 import glob
 import uuid
-import boto3
 import json
 from pipeline import run_pipeline
+from config import get_boto3_client, get_dynamodb_table, get_s3_bucket_name
 
-ENDPOINT_URL = "http://localhost:4566"
-REGION = "us-east-1"
-AWS_ACCESS_KEY_ID = "test"
-AWS_SECRET_ACCESS_KEY = "test"
-
-s3 = boto3.client(
-    's3', 
-    endpoint_url=ENDPOINT_URL, 
-    region_name=REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-
-dynamodb = boto3.resource(
-    'dynamodb', 
-    endpoint_url=ENDPOINT_URL, 
-    region_name=REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-
-table = dynamodb.Table('chronolab-records')
+s3 = get_boto3_client('s3')
+table = get_dynamodb_table()
 
 def upload_to_s3(pdf_path, filename):
     print(f"Uploading {filename} to S3...")
     with open(pdf_path, "rb") as f:
-        s3.put_object(Bucket="chronolab-pdfs", Key=filename, Body=f)
+        s3.put_object(Bucket=get_s3_bucket_name(), Key=filename, Body=f)
 
 def save_to_dynamodb(records):
     print(f"Saving {len(records)} records to DynamoDB...")

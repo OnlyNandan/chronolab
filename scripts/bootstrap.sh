@@ -35,13 +35,29 @@ require_var() {
   fi
 }
 
-echo "== ChronoLab bootstrap =="
-echo "AWS_MODE=${AWS_MODE:-<unset>}"
+# Idempotent .env upsert: replaces the line if the key exists, appends otherwise.
+upsert_env() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    local tmp
+    tmp="$(mktemp)"
+    awk -F= -v k="$key" -v v="$value" 'BEGIN{OFS="="} $1==k{$0=k"="v} {print}' "$ENV_FILE" > "$tmp"
+    mv "$tmp" "$ENV_FILE"
+  else
+    echo "${key}=${value}" >> "$ENV_FILE"
+  fi
+  export "${key}=${value}"
+}
 
+require_var AWS_REGION
+require_var RESOURCE_SUFFIX
+
+echo "== ChronoLab bootstrap =="
+echo "AWS_MODE=${AWS_MODE:-local}"
+
+AWS_CLI_ARGS=()
 if [ "${AWS_MODE:-local}" = "cloud" ]; then
-  require_var AWS_REGION
   require_var BEDROCK_REGION
-  require_var RESOURCE_SUFFIX
 
   if ! command -v aws >/dev/null 2>&1; then
     echo "ERROR: AWS CLI not found on PATH." >&2
@@ -54,11 +70,56 @@ if [ "${AWS_MODE:-local}" = "cloud" ]; then
   fi
 
   echo "Preflight OK — AWS CLI present, credentials valid."
-  # Step 1 (budget alarm), Bedrock access check, and per-phase provisioning
-  # are appended here by later phases of the migration plan.
 else
-  echo "AWS_MODE=local — targeting LocalStack at ${LOCALSTACK_ENDPOINT_URL:-http://localhost:4566}."
-  echo "No cloud resources will be created. Provisioning against LocalStack happens in-app via backend/config.py."
+  export AWS_ACCESS_KEY_ID="test"
+  export AWS_SECRET_ACCESS_KEY="test"
+  LOCALSTACK_ENDPOINT_URL="${LOCALSTACK_ENDPOINT_URL:-http://localhost:4566}"
+  AWS_CLI_ARGS=(--endpoint-url "$LOCALSTACK_ENDPOINT_URL")
+  echo "AWS_MODE=local — targeting LocalStack/moto_server at $LOCALSTACK_ENDPOINT_URL."
+
+  if ! curl -s -o /dev/null "$LOCALSTACK_ENDPOINT_URL"; then
+    echo "ERROR: nothing responding at $LOCALSTACK_ENDPOINT_URL. Start moto_server first." >&2
+    exit 1
+  fi
 fi
 
-echo "== bootstrap.sh stub complete =="
+# ── Phase 1: S3 bucket + DynamoDB table ─────────────────────────────────────
+
+BUCKET_NAME="chronolab-pdfs-${RESOURCE_SUFFIX}"
+TABLE_NAME="chronolab-records-${RESOURCE_SUFFIX}"
+
+if aws s3api head-bucket --bucket "$BUCKET_NAME" "${AWS_CLI_ARGS[@]}" >/dev/null 2>&1; then
+  echo "S3 bucket $BUCKET_NAME already exists."
+else
+  echo "Creating S3 bucket $BUCKET_NAME..."
+  if [ "$AWS_REGION" = "us-east-1" ]; then
+    aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$AWS_REGION" "${AWS_CLI_ARGS[@]}" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$BUCKET_NAME" --region "$AWS_REGION" \
+      --create-bucket-configuration LocationConstraint="$AWS_REGION" "${AWS_CLI_ARGS[@]}" >/dev/null
+  fi
+  aws s3api put-public-access-block --bucket "$BUCKET_NAME" "${AWS_CLI_ARGS[@]}" \
+    --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" "${AWS_CLI_ARGS[@]}" \
+    --versioning-configuration Status=Enabled
+  echo "Bucket created (public access blocked, versioning enabled)."
+fi
+upsert_env "S3_BUCKET_NAME" "$BUCKET_NAME"
+
+if aws dynamodb describe-table --table-name "$TABLE_NAME" "${AWS_CLI_ARGS[@]}" >/dev/null 2>&1; then
+  echo "DynamoDB table $TABLE_NAME already exists."
+else
+  echo "Creating DynamoDB table $TABLE_NAME..."
+  aws dynamodb create-table --table-name "$TABLE_NAME" "${AWS_CLI_ARGS[@]}" \
+    --attribute-definitions AttributeName=patient_id,AttributeType=S AttributeName=record_id,AttributeType=S \
+    --key-schema AttributeName=patient_id,KeyType=HASH AttributeName=record_id,KeyType=RANGE \
+    --billing-mode PAY_PER_REQUEST >/dev/null
+  aws dynamodb wait table-exists --table-name "$TABLE_NAME" "${AWS_CLI_ARGS[@]}"
+  echo "Table created (on-demand billing)."
+fi
+upsert_env "DYNAMODB_TABLE_NAME" "$TABLE_NAME"
+
+echo "== bootstrap.sh complete =="
+echo "S3_BUCKET_NAME=$BUCKET_NAME"
+echo "DYNAMODB_TABLE_NAME=$TABLE_NAME"
+echo "Next: run the app (backend + frontend) or scripts/deploy.sh once it exists."

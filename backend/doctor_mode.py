@@ -1,23 +1,16 @@
 import json
-import boto3
 from boto3.dynamodb.conditions import Key
 import ollama
 import sys
 
-ENDPOINT_URL = "http://localhost:4566"
-REGION = "us-east-1"
-AWS_ACCESS_KEY_ID = "test"
-AWS_SECRET_ACCESS_KEY = "test"
+try:
+    from .config import get_dynamodb_table  # imported as backend.doctor_mode
+except ImportError:
+    from config import get_dynamodb_table  # run standalone: python doctor_mode.py
+
 
 def fetch_patient_history(patient_id: str):
-    dynamodb = boto3.resource(
-        'dynamodb', 
-        endpoint_url=ENDPOINT_URL, 
-        region_name=REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-    )
-    table = dynamodb.Table('chronolab-records')
+    table = get_dynamodb_table()
     response = table.query(
         KeyConditionExpression=Key('patient_id').eq(patient_id)
     )
