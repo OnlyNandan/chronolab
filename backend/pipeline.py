@@ -1,6 +1,6 @@
 import os
 import json
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF (import name kept as `fitz` alias, `fitz` package itself is deprecated)
 from PIL import Image
 import io
 import base64
