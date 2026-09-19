@@ -20,6 +20,19 @@ AWS_MODE = os.getenv("AWS_MODE", "local")
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
 LOCALSTACK_ENDPOINT_URL = os.getenv("LOCALSTACK_ENDPOINT_URL", "http://localhost:4566")
 
+# Bedrock model access may only be approved in a different region than the one
+# holding S3/DynamoDB (see MIGRATION_PLAN.md Phase 0b) — kept separate on purpose.
+BEDROCK_REGION = os.getenv("BEDROCK_REGION", AWS_REGION)
+BEDROCK_VISION_MODEL_ID = os.getenv(
+    "BEDROCK_VISION_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0"
+)
+BEDROCK_TEXT_MODEL_ID = os.getenv(
+    "BEDROCK_TEXT_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0"
+)
+
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "llava:7b")
+OLLAMA_TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "qwen2.5:3b")
+
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
 
@@ -37,15 +50,16 @@ def _require(value: str | None, var_name: str) -> str:
     return value
 
 
-def get_boto3_client(service_name: str):
+def get_boto3_client(service_name: str, region_name: str | None = None):
+    region = region_name or AWS_REGION
     if AWS_MODE == "local":
         return boto3.client(
             service_name,
             endpoint_url=LOCALSTACK_ENDPOINT_URL,
-            region_name=AWS_REGION,
+            region_name=region,
             **_LOCAL_TEST_CREDENTIALS,
         )
-    return boto3.client(service_name, region_name=AWS_REGION)
+    return boto3.client(service_name, region_name=region)
 
 
 def get_boto3_resource(service_name: str):

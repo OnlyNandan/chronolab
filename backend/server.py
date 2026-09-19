@@ -5,11 +5,14 @@ from boto3.dynamodb.conditions import Key
 from pydantic import BaseModel
 import ollama
 import json
+import logging
 import uuid
 import datetime
 from .config import get_dynamodb_table
 from .auth_middleware import requires_auth
 from .doctor_mode import fetch_patient_history, generate_doctor_summary
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="ChronoLab API")
 

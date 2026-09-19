@@ -70,6 +70,19 @@ if [ "${AWS_MODE:-local}" = "cloud" ]; then
   fi
 
   echo "Preflight OK — AWS CLI present, credentials valid."
+
+  BEDROCK_TEXT_MODEL_ID="${BEDROCK_TEXT_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}"
+  echo "Checking Bedrock model access for $BEDROCK_TEXT_MODEL_ID in $BEDROCK_REGION..."
+  if ! aws bedrock-runtime converse \
+        --region "$BEDROCK_REGION" \
+        --model-id "$BEDROCK_TEXT_MODEL_ID" \
+        --messages '[{"role":"user","content":[{"text":"ping"}]}]' \
+        >/dev/null 2>&1; then
+    echo "ERROR: Bedrock model access check failed for $BEDROCK_TEXT_MODEL_ID in $BEDROCK_REGION." >&2
+    echo "  Request model access in the Bedrock console (Model access page) and re-run this script." >&2
+    exit 1
+  fi
+  echo "Bedrock model access confirmed."
 else
   export AWS_ACCESS_KEY_ID="test"
   export AWS_SECRET_ACCESS_KEY="test"
