@@ -1,6 +1,6 @@
 # 🧬 ChronoLab
 
-**1st Place Hackathon Submission for "First Commit" (Build It Track - AWS HealthTech)**
+**Hackathon Submission for "First Commit" (Build It Track - AWS HealthTech)**
 
 ChronoLab is a next-generation, AI-driven unified timeline for patient lab reports. Built to transcend standard dashboards, ChronoLab ingests unstructured medical data, builds mathematical and chronological health timelines, and empowers doctors with an Interactive Retrieval-Augmented Generation (RAG) assistant—all while strictly enforcing non-diagnostic constraints to ensure medical safety.
 
