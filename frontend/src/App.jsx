@@ -3,21 +3,26 @@ import Timeline from './Timeline';
 import NLPQueryBox from './NLPQueryBox';
 import DoctorInsights from './DoctorInsights';
 import ChatAssistant from './ChatAssistant';
+import Login from './Login';
+import { getSession, logout, authFetch, authWsUrl } from './auth';
 import './App.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
+
 function App() {
+  const [session, setSession] = useState(getSession());
   const [data, setData] = useState([]);
   const [meds, setMeds] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // We are viewing PT-1001's record
-  const PATIENT_ID = "PT-1001";
+  // Doctors view a demo patient; patients only ever see their own timeline
+  // (the backend enforces this via AVP regardless of what's requested here).
+  const PATIENT_ID = session?.role === 'patient' ? session.patientId : 'PT-1001';
 
   const fetchRecords = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/records/${PATIENT_ID}`, {
-        headers: { 'X-User-Role': 'doctor', 'X-User-Id': 'DOC-001' }
-      });
+      const res = await authFetch(`${API_BASE_URL}/api/records/${PATIENT_ID}`);
       const fetchedData = await res.json();
       if (fetchedData && fetchedData.length > 0) {
         setData(fetchedData);
@@ -29,9 +34,7 @@ function App() {
 
   const fetchMedications = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/medications/${PATIENT_ID}`, {
-        headers: { 'X-User-Role': 'doctor', 'X-User-Id': 'DOC-001' }
-      });
+      const res = await authFetch(`${API_BASE_URL}/api/medications/${PATIENT_ID}`);
       const fetchedMeds = await res.json();
       if (fetchedMeds && fetchedMeds.length > 0) {
         setMeds(fetchedMeds);
@@ -42,12 +45,14 @@ function App() {
   };
 
   useEffect(() => {
+    if (!session) return;
+
     Promise.all([fetchRecords(), fetchMedications()]).then(() => {
       setLoading(false);
     });
 
     // Real-Time Collaboration: Connect to WebSocket
-    const ws = new WebSocket(`ws://localhost:8000/ws/timeline/${PATIENT_ID}`);
+    const ws = new WebSocket(authWsUrl(`${WS_BASE_URL}/ws/timeline/${PATIENT_ID}`));
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_MEDICATION') {
@@ -60,7 +65,7 @@ function App() {
     };
 
     return () => ws.close();
-  }, []);
+  }, [session]);
 
   const handleMedicationAdded = (newMed) => {
     // We can rely on WebSocket for updates, but for immediate UI response, we also add it directly.
@@ -72,9 +77,7 @@ function App() {
 
   const handleExportFHIR = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/export/fhir/${PATIENT_ID}`, {
-        headers: { 'X-User-Role': 'doctor', 'X-User-Id': 'DOC-001' }
-      });
+      const res = await authFetch(`${API_BASE_URL}/api/export/fhir/${PATIENT_ID}`);
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -89,6 +92,15 @@ function App() {
     }
   };
 
+  if (!session) {
+    return <Login onLoggedIn={setSession} />;
+  }
+
+  const handleLogout = () => {
+    logout();
+    setSession(null);
+  };
+
   return (
     <div className="dashboard-container">
       <div className="header">
@@ -96,9 +108,14 @@ function App() {
           <h1>ChronoLab</h1>
           <p>Unified Timeline for Patient Lab Reports</p>
         </div>
-        <button className="fhir-button" onClick={handleExportFHIR}>
-          Export to FHIR
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button className="fhir-button" onClick={handleExportFHIR}>
+            Export to FHIR
+          </button>
+          <button className="fhir-button" onClick={handleLogout}>
+            Log out ({session.role})
+          </button>
+        </div>
       </div>
       
       <div className="top-widgets">

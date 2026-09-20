@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { authFetch } from './auth';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 function DoctorInsights({ patientId }) {
   const [insights, setInsights] = useState('');
@@ -7,12 +10,7 @@ function DoctorInsights({ patientId }) {
   useEffect(() => {
     const fetchInsights = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/insights/${patientId}`, {
-          headers: {
-            'X-User-Role': 'doctor',
-            'X-User-Id': 'DOC-001'
-          }
-        });
+        const res = await authFetch(`${API_BASE_URL}/api/insights/${patientId}`);
         const data = await res.json();
         setInsights(data.insights);
       } catch (err) {

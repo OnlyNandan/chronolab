@@ -16,12 +16,19 @@ COMPLETED:
 - [WORLD-CLASS] Premium Startup-Level UI (Animated Gradient Mesh).
 - [1ST-PLACE] Interactive AI Timeline Assistant (RAG Chatbot).
 
+- [MIGRATION P0] Config scaffolding: requirements.txt, .env.example, .gitignore, scripts/bootstrap.sh stub.
+- [MIGRATION P1] Real S3 + DynamoDB via backend/config.py (AWS_MODE=local|cloud) and bootstrap.sh provisioning.
+- [MIGRATION P2] Bedrock provider abstraction (backend/providers.py) alongside Ollama; unit conversion moved to deterministic Python (backend/unit_conversion.py, 8 tests); silent vision->text fallback now logs at WARNING.
+- [MIGRATION P3] Real Cedar auth via Amazon Verified Permissions: cedar/*.cedar policies, auth_middleware.py rewritten around IsAuthorizedWithToken, Cognito+AVP bootstrap.sh provisioning, frontend login screen + token-based auth.
+
 IN PROGRESS:
-- Final polish for Hackathon presentation.
+- AWS migration (see MIGRATION_PLAN.md, local copy only, not committed) — 24-hour mode, Phases 0-4 in scope. Phase 4 (EC2 deploy) next.
+- Everything above is code-complete but UNTESTED against a real AWS account — no AWS credits yet. Verified via LocalStack/moto (Phases 0-1), fake-provider wiring tests (Phase 2), and a mocked-AVP-client + fake-aws-CLI-stub dry run (Phase 3). Needs a real dry run per MIGRATION_PLAN.md Phase 9 the moment AWS access exists.
 
 NEXT:
-- Ship the project.
+- Phase 4: Dockerize backend, EC2 + Caddy deploy script, Amplify frontend deploy, replace hardcoded localhost:8000 in frontend.
+- Real AWS dry run of Phases 1-3 once account credits land.
 
 KNOWN BUGS:
-- `llava:7b` vision model extraction fails if model isn't pulled in Ollama (fails over to text successfully).
-- PyMuPDF deprecation warning on `fitz` module in extraction logic.
+- `llava:7b` vision model extraction fails if model isn't pulled in Ollama (fails over to text successfully, now logs at WARNING instead of print()).
+- Unverified assumption (Phase 3): AVP's Cognito identity source is assumed to map `custom:role`/`custom:patient_id` token claims directly to `principal.role`/`principal.patient_id` with no extra schema config. Standard documented behavior, but never exercised against a real pool — see the note bootstrap.sh prints after Cognito/AVP provisioning.

@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { authFetch } from './auth';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 function NLPQueryBox({ patientId, onMedicationAdded }) {
   const [query, setQuery] = useState('');
@@ -56,13 +59,9 @@ function NLPQueryBox({ patientId, onMedicationAdded }) {
     setError('');
 
     try {
-      const response = await fetch('http://localhost:8000/api/medications/nlp', {
+      const response = await authFetch(`${API_BASE_URL}/api/medications/nlp`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': 'doctor', // Satisfy Cedar Auth
-          'X-User-Id': 'DOC-001'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, patient_id: patientId })
       });
 

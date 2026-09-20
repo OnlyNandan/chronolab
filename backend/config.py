@@ -35,6 +35,7 @@ OLLAMA_TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "qwen2.5:3b")
 
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
+AVP_POLICY_STORE_ID = os.getenv("AVP_POLICY_STORE_ID")
 
 _LOCAL_TEST_CREDENTIALS = {
     "aws_access_key_id": "test",
@@ -62,6 +63,16 @@ def get_boto3_client(service_name: str, region_name: str | None = None):
     return boto3.client(service_name, region_name=region)
 
 
+def get_real_aws_client(service_name: str, region_name: str | None = None):
+    """For services with no LocalStack/moto emulation (Cognito, Verified Permissions).
+
+    Always hits real AWS, even when AWS_MODE=local — there is no local emulation path
+    for these, so the rest of the app can stay on LocalStack while auth talks to the
+    real account (see MIGRATION_PLAN.md Phase 3 / hour-12 fallback).
+    """
+    return boto3.client(service_name, region_name=region_name or AWS_REGION)
+
+
 def get_boto3_resource(service_name: str):
     if AWS_MODE == "local":
         return boto3.resource(
@@ -80,3 +91,7 @@ def get_dynamodb_table():
 
 def get_s3_bucket_name() -> str:
     return _require(S3_BUCKET_NAME, "S3_BUCKET_NAME")
+
+
+def get_avp_policy_store_id() -> str:
+    return _require(AVP_POLICY_STORE_ID, "AVP_POLICY_STORE_ID")

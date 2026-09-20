@@ -9,7 +9,7 @@ import logging
 import uuid
 import datetime
 from .config import get_dynamodb_table
-from .auth_middleware import requires_auth
+from .auth_middleware import requires_auth, evaluate_authorization
 from .doctor_mode import fetch_patient_history, generate_doctor_summary
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,6 +46,24 @@ manager = ConnectionManager()
 
 @app.websocket("/ws/timeline/{patient_id}")
 async def websocket_endpoint(websocket: WebSocket, patient_id: str):
+    # Browsers can't set custom headers on the WebSocket handshake, so the Cognito
+    # token travels as a query param instead: wss://.../ws/timeline/{id}?token=...
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Missing token")
+        return
+
+    try:
+        decision = evaluate_authorization(token, "ViewRecords", patient_id)
+    except Exception as e:
+        logging.getLogger("chronolab.auth").warning(f"AVP authorization call failed for WS timeline: {e}")
+        await websocket.close(code=4403, reason="Authorization check failed")
+        return
+
+    if decision.get("decision") != "ALLOW":
+        await websocket.close(code=4403, reason="Forbidden")
+        return
+
     await manager.connect(websocket)
     try:
         while True:

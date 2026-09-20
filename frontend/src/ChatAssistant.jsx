@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { authFetch } from './auth';
 import './ChatAssistant.css';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 function ChatAssistant({ patientId }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -28,13 +31,9 @@ function ChatAssistant({ patientId }) {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await authFetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Role': 'doctor',
-          'X-User-Id': 'DOC-001'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           patient_id: patientId,
           question: userMessage.content,
