@@ -37,6 +37,14 @@ S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME")
 AVP_POLICY_STORE_ID = os.getenv("AVP_POLICY_STORE_ID")
 
+# Comma-separated list of allowed origins for CORS and the WebSocket upgrade check.
+# Defaults to the Vite dev server so local dev keeps working with no .env change.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 _LOCAL_TEST_CREDENTIALS = {
     "aws_access_key_id": "test",
     "aws_secret_access_key": "test",

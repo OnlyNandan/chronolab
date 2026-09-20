@@ -1,12 +1,13 @@
 import json
 from boto3.dynamodb.conditions import Key
-import ollama
 import sys
 
 try:
     from .config import get_dynamodb_table  # imported as backend.doctor_mode
+    from . import providers
 except ImportError:
     from config import get_dynamodb_table  # run standalone: python doctor_mode.py
+    import providers
 
 
 def fetch_patient_history(patient_id: str):
@@ -42,15 +43,7 @@ def generate_doctor_summary(patient_history_json: str):
     prompt = f"Patient History JSON:\n{patient_history_json}\n\nPlease provide the descriptive trend summary."
     
     try:
-        response = ollama.chat(
-            model='qwen2.5:3b',
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': prompt}
-            ],
-            options={'temperature': 0.2}
-        )
-        return response['message']['content']
+        return providers.get_provider().chat(system_prompt, prompt, temperature=0.2)
     except Exception as e:
         return f"Error generating summary: {e}"
 

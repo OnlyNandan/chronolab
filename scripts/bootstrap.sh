@@ -273,6 +273,193 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 create_or_update_policy "AVP_DOCTOR_POLICY_ID" "$CEDAR_DIR/doctor.cedar" "ChronoLab doctor policy"
 create_or_update_policy "AVP_PATIENT_POLICY_ID" "$CEDAR_DIR/patient.cedar" "ChronoLab patient policy"
 
+# ── Phase 4: EC2 (Docker + Caddy) + Amplify app scaffold ────────────────────
+# Real infrastructure spend starts here — only in AWS_MODE=cloud, never local.
+
+if [ "${AWS_MODE:-local}" = "cloud" ]; then
+  ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+
+  ROLE_NAME="chronolab-ec2-role-${RESOURCE_SUFFIX}"
+  PROFILE_NAME="chronolab-ec2-profile-${RESOURCE_SUFFIX}"
+  SG_NAME="chronolab-sg-${RESOURCE_SUFFIX}"
+  KEY_NAME="chronolab-key-${RESOURCE_SUFFIX}"
+  KEY_PATH="$REPO_ROOT/.chronolab-${RESOURCE_SUFFIX}.pem"
+  INSTANCE_NAME="chronolab-${RESOURCE_SUFFIX}"
+
+  # IAM role + instance profile, scoped to exactly this deploy's resources —
+  # no wildcards. This is the one thing not to simplify away (see plan Phase 4).
+  if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+    echo "IAM role $ROLE_NAME already exists."
+  else
+    echo "Creating IAM role $ROLE_NAME..."
+    aws iam create-role --role-name "$ROLE_NAME" \
+      --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+      >/dev/null
+  fi
+
+  # Bedrock grants cover both direct foundation-model invocation and cross-region
+  # inference-profile invocation (needed for models, e.g. some Claude 3.5 Sonnet
+  # versions, that Bedrock only serves via an inference profile in most regions).
+  # See the BedrockCrossRegionInferenceProfileRouting statement below for why the
+  # foundation-model resource is also needed with a region wildcard in that case.
+  PERMISSIONS_POLICY=$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3Bucket",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::${BUCKET_NAME}", "arn:aws:s3:::${BUCKET_NAME}/*"]
+    },
+    {
+      "Sid": "DynamoDbTable",
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"],
+      "Resource": "arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_ID}:table/${TABLE_NAME}"
+    },
+    {
+      "Sid": "BedrockModels",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:${BEDROCK_REGION}::foundation-model/${BEDROCK_VISION_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}",
+        "arn:aws:bedrock:${BEDROCK_REGION}::foundation-model/${BEDROCK_TEXT_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}",
+        "arn:aws:bedrock:${BEDROCK_REGION}:${ACCOUNT_ID}:inference-profile/${BEDROCK_VISION_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}",
+        "arn:aws:bedrock:${BEDROCK_REGION}:${ACCOUNT_ID}:inference-profile/${BEDROCK_TEXT_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}"
+      ]
+    },
+    {
+      "Sid": "BedrockCrossRegionInferenceProfileRouting",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/${BEDROCK_VISION_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}",
+        "arn:aws:bedrock:*::foundation-model/${BEDROCK_TEXT_MODEL_ID:-anthropic.claude-3-5-haiku-20241022-v1:0}"
+      ]
+    },
+    {
+      "Sid": "VerifiedPermissions",
+      "Effect": "Allow",
+      "Action": "verifiedpermissions:IsAuthorizedWithToken",
+      "Resource": "arn:aws:verifiedpermissions::${ACCOUNT_ID}:policy-store/${AVP_POLICY_STORE_ID}"
+    }
+  ]
+}
+JSON
+)
+  aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name "chronolab-least-privilege" \
+    --policy-document "$PERMISSIONS_POLICY" >/dev/null
+  echo "IAM role permissions set (scoped to this bucket/table/models/policy-store only)."
+
+  if aws iam get-instance-profile --instance-profile-name "$PROFILE_NAME" >/dev/null 2>&1; then
+    echo "Instance profile $PROFILE_NAME already exists."
+  else
+    echo "Creating instance profile $PROFILE_NAME..."
+    aws iam create-instance-profile --instance-profile-name "$PROFILE_NAME" >/dev/null
+    aws iam add-role-to-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "$ROLE_NAME" >/dev/null
+    echo "Waiting for instance profile propagation..."
+    sleep 10
+  fi
+  INSTANCE_PROFILE_ARN=$(aws iam get-instance-profile --instance-profile-name "$PROFILE_NAME" \
+    --query 'InstanceProfile.Arn' --output text)
+  upsert_env "EC2_IAM_INSTANCE_PROFILE_ARN" "$INSTANCE_PROFILE_ARN"
+
+  # Security group: 22/80/443 from anywhere — hackathon-acceptable shortcut,
+  # noted as such in the writeup rather than pretending otherwise (plan Phase 4).
+  if [ -n "${EC2_SECURITY_GROUP_ID:-}" ]; then
+    echo "Security group already recorded in .env: $EC2_SECURITY_GROUP_ID"
+  else
+    VPC_ID=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
+    echo "Creating security group $SG_NAME in default VPC $VPC_ID..."
+    EC2_SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name "$SG_NAME" \
+      --description "ChronoLab ${RESOURCE_SUFFIX}: 22/80/443 inbound" --vpc-id "$VPC_ID" \
+      --query 'GroupId' --output text)
+    for port in 22 80 443; do
+      aws ec2 authorize-security-group-ingress --group-id "$EC2_SECURITY_GROUP_ID" \
+        --protocol tcp --port "$port" --cidr 0.0.0.0/0 >/dev/null
+    done
+    echo "Created security group $EC2_SECURITY_GROUP_ID (22/80/443 open)."
+  fi
+  upsert_env "EC2_SECURITY_GROUP_ID" "$EC2_SECURITY_GROUP_ID"
+
+  if [ -n "${EC2_KEY_NAME:-}" ] && [ -f "${EC2_SSH_KEY_PATH:-$KEY_PATH}" ]; then
+    echo "SSH key pair already recorded in .env: ${EC2_KEY_NAME}"
+  else
+    echo "Creating EC2 key pair $KEY_NAME..."
+    aws ec2 create-key-pair --key-name "$KEY_NAME" --query 'KeyMaterial' --output text > "$KEY_PATH"
+    chmod 400 "$KEY_PATH"
+    echo "Saved private key to $KEY_PATH (gitignored — never commit this)."
+  fi
+  upsert_env "EC2_KEY_NAME" "$KEY_NAME"
+  upsert_env "EC2_SSH_KEY_PATH" "$KEY_PATH"
+
+  if [ -n "${EC2_INSTANCE_ID:-}" ]; then
+    echo "EC2 instance already recorded in .env: $EC2_INSTANCE_ID"
+  else
+    AMI_ID=$(aws ssm get-parameters \
+      --names /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
+      --region "$AWS_REGION" --query 'Parameters[0].Value' --output text)
+    echo "Launching t3.small ($AMI_ID) as $INSTANCE_NAME..."
+    EC2_INSTANCE_ID=$(aws ec2 run-instances \
+      --image-id "$AMI_ID" \
+      --instance-type t3.small \
+      --key-name "$EC2_KEY_NAME" \
+      --security-group-ids "$EC2_SECURITY_GROUP_ID" \
+      --iam-instance-profile "Name=${PROFILE_NAME}" \
+      --user-data "file://${REPO_ROOT}/deploy/user-data.sh" \
+      --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${INSTANCE_NAME}}]" \
+      --count 1 \
+      --query 'Instances[0].InstanceId' --output text)
+    echo "Launched $EC2_INSTANCE_ID, waiting for it to enter running state..."
+    aws ec2 wait instance-running --instance-ids "$EC2_INSTANCE_ID"
+  fi
+  upsert_env "EC2_INSTANCE_ID" "$EC2_INSTANCE_ID"
+
+  EC2_PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids "$EC2_INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
+  EC2_PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$EC2_INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+  upsert_env "EC2_PUBLIC_DNS" "$EC2_PUBLIC_DNS"
+  echo "Instance public DNS: $EC2_PUBLIC_DNS ($EC2_PUBLIC_IP)"
+
+  if [ -n "${DUCKDNS_DOMAIN:-}" ] && [ -n "${DUCKDNS_TOKEN:-}" ]; then
+    echo "Pointing $DUCKDNS_DOMAIN at $EC2_PUBLIC_IP..."
+    curl -s "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip=${EC2_PUBLIC_IP}" >/dev/null
+  else
+    echo "DUCKDNS_DOMAIN/TOKEN not set — Caddy will serve plain HTTP on $EC2_PUBLIC_IP (see deploy/Caddyfile)."
+  fi
+
+  # Amplify: app + branch scaffold only. scripts/deploy.sh does the actual
+  # build-and-upload (manual deploy, no GitHub connection needed).
+  if [ -n "${AMPLIFY_APP_ID:-}" ]; then
+    echo "Amplify app already recorded in .env: $AMPLIFY_APP_ID"
+  else
+    echo "Creating Amplify app chronolab-${RESOURCE_SUFFIX}..."
+    AMPLIFY_APP_ID=$(aws amplify create-app --name "chronolab-${RESOURCE_SUFFIX}" \
+      --query 'app.appId' --output text)
+    aws amplify create-branch --app-id "$AMPLIFY_APP_ID" --branch-name main >/dev/null
+    echo "Created Amplify app $AMPLIFY_APP_ID with branch 'main'."
+  fi
+  upsert_env "AMPLIFY_APP_ID" "$AMPLIFY_APP_ID"
+  AMPLIFY_DEFAULT_DOMAIN=$(aws amplify get-app --app-id "$AMPLIFY_APP_ID" --query 'app.defaultDomain' --output text)
+  upsert_env "AMPLIFY_DEFAULT_DOMAIN" "$AMPLIFY_DEFAULT_DOMAIN"
+
+  # Build the CORS allowlist from whichever origins actually exist — never a
+  # dangling "https://" from an unset DUCKDNS_DOMAIN.
+  CORS_ORIGINS=("http://localhost:5173" "https://main.${AMPLIFY_DEFAULT_DOMAIN}")
+  if [ -n "${DUCKDNS_DOMAIN:-}" ]; then
+    CORS_ORIGINS+=("https://${DUCKDNS_DOMAIN}")
+  fi
+  CORS_ORIGINS_JOINED="$(IFS=,; echo "${CORS_ORIGINS[*]}")"
+  upsert_env "CORS_ALLOWED_ORIGINS" "$CORS_ORIGINS_JOINED"
+
+  echo ""
+  echo "EC2 and Amplify scaffolding ready. Run scripts/deploy.sh to build and push the app."
+  echo "Remember: the t3.small bills while running (~\$0.02/hr) — stop it after the demo:"
+  echo "  aws ec2 stop-instances --instance-ids $EC2_INSTANCE_ID --region $AWS_REGION"
+fi
+
 echo "== bootstrap.sh complete =="
 echo "S3_BUCKET_NAME=$BUCKET_NAME"
 echo "DYNAMODB_TABLE_NAME=$TABLE_NAME"

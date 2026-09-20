@@ -1,0 +1,13 @@
+# Caddy gets a free TLS cert automatically for a real domain, and reverse-proxies
+# WebSocket upgrades with no extra config. Falls back to plain HTTP on the raw
+# instance IP if DUCKDNS_DOMAIN isn't set (useful before DNS/TLS is wired up —
+# note the multiplayer WS demo needs HTTPS once the frontend is on Amplify,
+# since a browser blocks ws:// from an https:// page).
+#
+# {$VAR:default} only substitutes when VAR is unset. docker-compose always sets
+# DUCKDNS_DOMAIN in this container's environment (even to "" when blank in .env),
+# so we resolve the empty-vs-unset distinction here instead of relying on Caddy's
+# built-in default.
+{$CADDY_SITE_ADDRESS:http://:80} {
+	reverse_proxy backend:8000
+}

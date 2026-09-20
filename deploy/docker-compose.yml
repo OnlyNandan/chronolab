@@ -1,0 +1,33 @@
+# Runs on the EC2 instance (see scripts/deploy.sh). Caddy terminates TLS and
+# reverse-proxies to the backend, handling WebSocket upgrades automatically —
+# that's the whole reason to use Caddy over raw nginx here.
+services:
+  backend:
+    image: chronolab-backend:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # docker-compose's ":-" default applies when DUCKDNS_DOMAIN is unset OR empty,
+      # unlike Caddy's own "$VAR:default" placeholder which only applies when unset —
+      # so we resolve the empty-string case (the documented "no domain" path) here.
+      - CADDY_SITE_ADDRESS=${DUCKDNS_DOMAIN:-http://:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -3,11 +3,12 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from boto3.dynamodb.conditions import Key
 from pydantic import BaseModel
-import ollama
 import json
 import logging
 import uuid
 import datetime
+from . import config
+from . import providers
 from .config import get_dynamodb_table
 from .auth_middleware import requires_auth, evaluate_authorization
 from .doctor_mode import fetch_patient_history, generate_doctor_summary
@@ -16,10 +17,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 app = FastAPI(title="ChronoLab API")
 
-# Allow frontend requests
+# CORS covers regular HTTP requests only — the WebSocket origin is checked
+# separately below, since CORS middleware doesn't apply to the WS upgrade.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -46,6 +48,13 @@ manager = ConnectionManager()
 
 @app.websocket("/ws/timeline/{patient_id}")
 async def websocket_endpoint(websocket: WebSocket, patient_id: str):
+    # CORS middleware doesn't cover the WebSocket upgrade — check the Origin header
+    # ourselves against the same allowlist used for regular HTTP CORS.
+    origin = websocket.headers.get("origin")
+    if origin and origin not in config.CORS_ALLOWED_ORIGINS:
+        await websocket.close(code=4403, reason="Origin not allowed")
+        return
+
     # Browsers can't set custom headers on the WebSocket handshake, so the Cognito
     # token travels as a query param instead: wss://.../ws/timeline/{id}?token=...
     token = websocket.query_params.get("token")
@@ -110,17 +119,9 @@ async def add_medication_nlp(request: Request, payload: NLPQuery):
     """
     
     try:
-        response = ollama.chat(
-            model='qwen2.5:3b',
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': payload.query}
-            ],
-            format='json',
-            options={'temperature': 0.1}
-        )
-        data = json.loads(response['message']['content'])
-        
+        prompt = f"{system_prompt}\n\nUser input: {payload.query}"
+        data = providers.get_provider().extract_from_text(prompt)
+
         # Save to DynamoDB
         record_id = f"MED#{datetime.datetime.now().strftime('%Y-%m-%d')}#{str(uuid.uuid4())[:8]}"
         item = {
@@ -230,21 +231,18 @@ async def chat_with_timeline(request: Request, payload: ChatQuery):
         {history_json}
         """
         
-        # 3. Construct Messages Array
-        messages = [{'role': 'system', 'content': system_prompt}]
-        for msg in payload.history:
-            messages.append({'role': msg.get('role', 'user'), 'content': msg.get('content', '')})
-            
-        messages.append({'role': 'user', 'content': payload.question})
-        
+        # 3. Construct history in the provider-agnostic {role, content} shape
+        history = [
+            {'role': msg.get('role', 'user'), 'content': msg.get('content', '')}
+            for msg in payload.history
+        ]
+
         # 4. Generate Response
-        response = ollama.chat(
-            model='qwen2.5:3b',
-            messages=messages,
-            options={'temperature': 0.2}
+        answer = providers.get_provider().chat(
+            system_prompt, payload.question, temperature=0.2, history=history
         )
-        
-        return {"answer": response['message']['content']}
+
+        return {"answer": answer}
         
     except Exception as e:
         return {"answer": f"Error querying timeline: {e}"}

@@ -20,14 +20,17 @@ COMPLETED:
 - [MIGRATION P1] Real S3 + DynamoDB via backend/config.py (AWS_MODE=local|cloud) and bootstrap.sh provisioning.
 - [MIGRATION P2] Bedrock provider abstraction (backend/providers.py) alongside Ollama; unit conversion moved to deterministic Python (backend/unit_conversion.py, 8 tests); silent vision->text fallback now logs at WARNING.
 - [MIGRATION P3] Real Cedar auth via Amazon Verified Permissions: cedar/*.cedar policies, auth_middleware.py rewritten around IsAuthorizedWithToken, Cognito+AVP bootstrap.sh provisioning, frontend login screen + token-based auth.
+- [MIGRATION P4] Deploy: backend/Dockerfile (non-root, tested for real with `docker build`+`docker run` against moto_server), deploy/docker-compose.yml + Caddyfile (TLS via DuckDNS, WS reverse-proxy), bootstrap.sh EC2 provisioning (least-privilege IAM instance profile, security group, key pair, AMI lookup, user-data) + Amplify app/branch scaffold, scripts/deploy.sh (scp+ssh backend push, Amplify manual zip deploy), CORS_ALLOWED_ORIGINS + WebSocket origin check in server.py.
+- [MIGRATION P9] Handoff basics: HANDOFF.md (command sequence, expected output per step, .env values, test credentials, troubleshooting table, EC2-stop reminder) and scripts/teardown.sh (deletes everything bootstrap.sh created, in reverse order, with a confirmation prompt). teardown.sh dry-run tested against a simulated post-bootstrap .env — real file deletion (the local .pem) verified for real, AWS calls via fake-aws-CLI-stub.
 
 IN PROGRESS:
-- AWS migration (see MIGRATION_PLAN.md, local copy only, not committed) — 24-hour mode, Phases 0-4 in scope. Phase 4 (EC2 deploy) next.
-- Everything above is code-complete but UNTESTED against a real AWS account — no AWS credits yet. Verified via LocalStack/moto (Phases 0-1), fake-provider wiring tests (Phase 2), and a mocked-AVP-client + fake-aws-CLI-stub dry run (Phase 3). Needs a real dry run per MIGRATION_PLAN.md Phase 9 the moment AWS access exists.
+- AWS migration (see MIGRATION_PLAN.md, local copy only, not committed) — 24-hour mode, Phases 0-4 in scope. All four phases + Phase 9 handoff basics now code-complete.
+- Everything is UNTESTED against a real AWS account — no AWS credits yet. Verified via: LocalStack/moto (Phases 0-1), fake-provider wiring tests (Phase 2), mocked-AVP-client + fake-aws-CLI-stub dry run (Phase 3), a REAL `docker build`+`docker run` of the backend image against moto_server (Phase 4), a fake-aws-CLI-stub dry run of the EC2/IAM/Amplify bootstrap.sh logic including a real idempotency re-run (Phase 4), and a fake-aws-CLI-stub dry run of teardown.sh. Needs a real dry run per MIGRATION_PLAN.md Phase 9 the moment AWS access exists.
 
 NEXT:
-- Phase 4: Dockerize backend, EC2 + Caddy deploy script, Amplify frontend deploy, replace hardcoded localhost:8000 in frontend.
-- Real AWS dry run of Phases 1-3 once account credits land.
+- Real AWS dry run of Phases 1-4 once account credits land (this is the big remaining unknown).
+- Phase 8 submission hygiene: update/delete stale IMPLEMENTATION_PLAN.md/BACKEND_STRUCTURE.md, validate FHIR bundle, writeup, demo video.
+- tests/test_endpoints.sh is now stale (still sends the old X-User-Role/X-User-Id headers from before Phase 3's Bearer-token auth) — not fixed, flagged only.
 
 KNOWN BUGS:
 - `llava:7b` vision model extraction fails if model isn't pulled in Ollama (fails over to text successfully, now logs at WARNING instead of print()).
